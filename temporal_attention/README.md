@@ -37,7 +37,3 @@ Our proposed model achieves state-of-the-art results on all the datasets.
 
 - The temporal attention mechanism is implemented in `modeling_tempobert.py`, in the `TemporalSelfAttention` class.
 - Note: this repository also supports the TempoBERT model ([paper](https://arxiv.org/abs/2110.06366)), which prepends time tokens to text sequences: https://github.com/guyrosin/tempobert
-
-<!-- @import "[TOC]" {cmd="toc" depthFrom=1 depthTo=6 orderedList=false} -->
-
-<!-- @import "[TOC]" {cmd="toc" depthFrom=1 depthTo=6 orderedList=false} -->

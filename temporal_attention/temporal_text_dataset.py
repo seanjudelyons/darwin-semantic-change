@@ -39,11 +39,14 @@ class TemporalText(datasets.ArrowBasedBuilder):
     @staticmethod
     def find_time(filename):
         filename = Path(filename).name
-        # Updated regex to match files named like `1821_letters.txt`
-        m = re.match(r"(\d+)_letters\.txt", filename)
+        # Look for the longest string starting with a digit, until a dot or an alphabet character.
+        # This matches both "nyt_2017.txt" and "nyt_2_2017.txt"
+        m = re.match(r".*?_(\d+.*?)[\.a-zA-Z]", filename)
         if m is None:
             return None
         time = m.group(1)
+        # Remove trailing underscores (e.g., for "nyt_2017_train.txt")
+        time = time.strip("_")
         return time
 
     def _generate_tables(self, files):

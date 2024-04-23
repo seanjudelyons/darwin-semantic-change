@@ -10,7 +10,6 @@ from transformers import AutoModelForMaskedLM
 cache_dir = "data/cache"
 
 
-# TODO fix the gpu
 class BertModel:
     def __init__(self, model_name_or_path=None, hf_pipeline=None, device=None) -> None:
         if hf_pipeline:

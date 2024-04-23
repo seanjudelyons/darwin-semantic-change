@@ -9,7 +9,7 @@ import scipy
 import torch
 from loguru import logger
 from tqdm import tqdm
-import os
+
 import data_utils
 import hf_utils
 import test_bert
@@ -135,7 +135,6 @@ def semantic_change_detection_wrapper(
     hidden_layers_number=None,
     verbose=False,
 ):
-    print("Starting semantic change detection wrapper function...")
     logger.info(
         f"Will evaluate on {corpus_name}, using {max_sentences=} and {hidden_layers_number=}"
     )
@@ -144,13 +143,10 @@ def semantic_change_detection_wrapper(
     model_to_result_str = {}
     target_words = None
     for model in models:
-        print(f"Processing model: {model}")
         shifts_dict = get_shifts(corpus_name, model.tokenizer)
         target_words = list(shifts_dict.keys())
-        print(f"Target words identified: {len(target_words)} words to process")
         missing_words = check_words_in_vocab(target_words, model.tokenizer, verbose)
         if missing_words:
-            print(f"Missing words that are not in the model's vocabulary: {len(missing_words)}")
             logger.warning(
                 f"{model} vocab doesn't contain {len(missing_words)} words: {missing_words}"
             )
@@ -161,16 +157,27 @@ def semantic_change_detection_wrapper(
             ignore_case=model.tokenizer.do_lower_case,
             override=False,
         )
-        print("Gathered sentences for target words.")
         if require_word_in_vocab:
             target_words = [word for word in target_words if word not in missing_words]
         detection_function = get_detection_function(score_method, model.config)
         word_to_score = {}
-        print(f"Using detection function: {detection_function.__name__}")
         logger.info(f"Evaluating {model} using {score_method.name}...")
         for word in tqdm(target_words, desc="Words"):
-            print(f"Processing word: {word}")
             time_sentences = word_time_sentences[word]
+            time_to_sentence_count = {
+                time: len(d) for time, d in time_sentences.items()
+            }
+            if any(count < max_sentences for count in time_to_sentence_count.values()):
+                logger.debug(f"Num of sentences for '{word}': {time_to_sentence_count}")
+            for time, sentences in time_sentences.items():
+                if not sentences:
+                    logger.debug(f"Found no sentences for '{word}' at time '{time}'")
+            if hasattr(model.config, 'times'):
+                missing_times = [
+                    time for time in model.config.times if time not in time_sentences
+                ]
+                if missing_times:
+                    logger.debug(f"Found no sentences for '{word}' at {missing_times}")
             score = detection_function(
                 time_sentences,
                 model,
@@ -182,18 +189,14 @@ def semantic_change_detection_wrapper(
             if score is None:
                 continue
             word_to_score[word] = score
-        print("Completed scoring for all target words.")
-        print(word_to_score)  # This shows the final scores for each word
         model_to_result_str[model] = compute_metrics(
             model,
             word_to_score,
             shifts_dict,
         )
-    print("All models processed. Final results:")
+    logger.info("Final results:")
     for model, result_str in model_to_result_str.items():
-        print(result_str)  # Each model's results printed
         logger.info(result_str)
-
 
 
 def check_words_in_vocab(words, tokenizer, verbose=False, check_split_words=False):
@@ -252,6 +255,12 @@ def semantic_change_detection_temporal(
     batch_size=None,
     hidden_layers_number=None,
 ):
+    """
+    For each time period,
+    Look at all of the sentences that contains this word.
+    For each sentence, predict its time.
+    Average the predicted times.
+    """
     if score_method == SCORE_METHOD.TIME_DIFF:
         raise NotImplementedError()
     elif score_method == SCORE_METHOD.COSINE_DIST:
@@ -266,19 +275,14 @@ def semantic_change_detection_temporal(
             )
             for time, sentences in time_sentences.items()
         ]
-        # Filter out empty embeddings
         embs = [emb for emb in embs if emb.nelement() > 0]
-        if len(embs) < 2:
-            logger.warning(f"Insufficient time data for {word} across time points. Returning NaN.")
-            return float('nan')  # Ensure at least two time points are present
-
+        if not embs:
+            return
         embs = torch.stack(embs)
         # calculate the cosine distance between the first and last vectors
         score = torch.dist(embs[0], embs[-1])
-        if torch.isnan(score):
-            logger.warning(f"NaN score encountered for {word}.")
-            return float('nan')
-        return score.item()
+        score = score.item()
+    return score
 
 
 def compute_metrics(
@@ -286,49 +290,57 @@ def compute_metrics(
     word_to_score,
     shifts,
 ):
-    if not word_to_score:  # Check if word_to_score is empty
-        logger.warning(f"No scores to compute metrics for {model}.")
-        return f"{model}: No data to calculate correlation."
-
     words_str = (
         f"out of {len(shifts)} words" if len(word_to_score) < len(shifts) else "words"
     )
-    try:
-        scores, ground_truth = zip(
-            *((score, shifts[word]) for word, score in word_to_score.items())
-        )
-        get_corr_str_partial = partial(utils.get_correlation_str, scores, ground_truth)
+    scores, ground_truth = zip(
+        *((score, shifts[word]) for word, score in word_to_score.items())
+    )
+    # compare scores and ground truth shifts
+    get_corr_str_partial = partial(utils.get_correlation_str, scores, ground_truth)
 
+    try:
         pearson_str = get_corr_str_partial(scipy.stats.pearsonr, "Pearson")
         spearman_str = get_corr_str_partial(scipy.stats.spearmanr, "Spearman")
         result_str = f"{model}: {pearson_str}, {spearman_str}"
         if len(word_to_score) < len(shifts):
             result_str += f" (based on {len(word_to_score)} {words_str})"
         logger.info(result_str)
-    except ValueError as e:
-        logger.error(f"Error computing metrics for {model}: {e}")
-        result_str = f"{model}: Error in computing correlation."
+    except ValueError:
+        result_str = f"{model}: couldn't calculate correlation for {word_to_score=}"
+        logger.error(result_str)
     return result_str
 
 
-
 def get_shifts(corpus_name, tokenizer=None):
-    # Hard-coded semantic change scores for specified words
-    hardcoded_shifts_dict = {
-        "species": 0.95,
-        "selection": 0.94,
-    }
-    if corpus_name.startswith("train"):
-        # Directly return the hard-coded shifts for simplicity
-        print(f"Using hard-coded semantic shifts for corpus: {corpus_name}")
-        return hardcoded_shifts_dict
+    if corpus_name.startswith("liverpool"):
+        input_path = f"data/{corpus_name}/liverpool_shift.csv"
+        df_shifts = pd.read_csv(input_path, sep=",", encoding="utf8")
+        shifts_dict = dict(zip(df_shifts.word, df_shifts.shift_index))
+    elif corpus_name.startswith("semeval_"):
+        input_path = f"data/{corpus_name}/truth/graded.txt"
+        df_shifts = pd.read_csv(input_path, sep="\t", names=["word", "score"])
+        if corpus_name.startswith("semeval_eng"):
+            # The English-lemma target words have the POS tag as a suffix
+            if "lemma" not in corpus_name:
+                df_shifts.word = df_shifts.word.str.extract(r'(.+)_.+')
+        elif corpus_name.startswith("semeval_ger"):
+            # The German target words are uppercased
+            if tokenizer.do_lower_case:
+                df_shifts.word = df_shifts.word.str.lower()
+        elif corpus_name.startswith("semeval_lat"):
+            pass
+        else:
+            logger.error(f"Unsupported corpus: {corpus_name}")
+            exit()
+        shifts_dict = dict(zip(df_shifts.word, df_shifts.score))
     else:
         logger.error(f"Unsupported corpus: {corpus_name}")
-        return {}
-
-    # If using a tokenizer, here you could further check or process the words
-    # For example, ensuring words are in tokenizer's vocabulary (optional)
-
+        exit()
+    # Sort the dictionary by shift value
+    shifts_dict = dict(
+        sorted(shifts_dict.items(), key=lambda item: item[1], reverse=False)
+    )
     return shifts_dict
 
 
@@ -336,9 +348,7 @@ if __name__ == "__main__":
     hf_utils.prepare_tf_classes()
     utils.set_result_logger_level()
 
-    # data_path = "data/semeval_eng_lemma_new"
-    data_path = "training_data"
-
+    data_path = "data/semeval_eng_lemma_new"
 
     corpus_name = Path(data_path).name
     test_corpus_path = data_path
@@ -354,7 +364,7 @@ if __name__ == "__main__":
     verbose = False
     device = 0
 
-    MODEL_PATH = "output/2024-4-6_22-3-40_5_epochs"  # Path to your model
+    MODEL_PATH = "results/TempoBERT_semeval_eng_from_bert-tiny_prepend_token_linebyline_dynamic_30epochs_lr3e-4_split"  # Path to your model
     tester = test_bert.Tester(MODEL_PATH, device=device)
 
     if not verbose:

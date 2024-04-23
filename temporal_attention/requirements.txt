@@ -1,7 +1,7 @@
 loguru~=0.5.3
 pandas~=1.2.4
 datasets~=1.15.1
-git+https://github.com/guyrosin/transformers.git@fillmask_pipeline_fix#egg=transformers
+git+git://github.com/guyrosin/transformers.git@fillmask_pipeline_fix#egg=transformers
 tokenizers~=0.10.3
 python-dotenv~=0.15.0
 typeguard~=2.11.1

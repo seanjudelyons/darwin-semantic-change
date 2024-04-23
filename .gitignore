@@ -1,4 +1,3 @@
-
 ### vscode ###
 .vscode/*
 !.vscode/settings.json
@@ -14,7 +13,11 @@
 **/runs
 wandb/
 plots/
-
+output/
 *.lock
 .env
-output
+script.txt
+training_data
+semeval*
+temporal_attention/output
+
