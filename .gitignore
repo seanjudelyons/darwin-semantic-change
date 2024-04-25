@@ -6,18 +6,21 @@
 !.vscode/extensions.json
 *.code-workspace
 
-**/data
-**/__pycache__
-**/logs
-**/results
-**/runs
-wandb/
-plots/
-output/
-*.lock
-.env
-script.txt
-training_data
-semeval*
+temporal_attention/**/data
+temporal_attention/**/__pycache__
+temporal_attention/**/logs
+temporal_attention/**/results
+temporal_attention/**/runs
+temporal_attention/wandb/
+temporal_attention/plots/
+temporal_attention/output/
+temporal_attention/*.lock
+temporal_attention/.env
+temporal_attention/script.txt
+temporal_attention/training_data
+temporal_attention/semeval*
 temporal_attention/output
+temporal_attention/data
+temporal_attention/data_2
+
 
