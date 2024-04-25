@@ -9,25 +9,36 @@ from transformers import AutoModelForMaskedLM, pipeline
 def predict_time(sentence, fill_mask_pipelines, print_results=True):
     if not isinstance(fill_mask_pipelines, list):
         fill_mask_pipelines = [fill_mask_pipelines]
+    
+    # Print the first pipeline's model configuration to verify times are set up correctly
+    print("Model times:", fill_mask_pipelines[0].model.config.times)
+
     time_tokens = [f"<{time}>" for time in fill_mask_pipelines[0].model.config.times]
+    print("Time tokens:", time_tokens)  # Print the time tokens to ensure they are generated correctly
+
     result_dict = {}
     original_sentence = sentence
     sentence = "[MASK] " + sentence
+    # print("Modified sentence for prediction:", sentence)  # Print the modified sentence to check masking
+
     for model_i, fill_mask in enumerate(fill_mask_pipelines):
-        fill_result = fill_mask(sentence, targets=time_tokens, truncation=True)
-        result = {res["token_str"]: res["score"] for res in fill_result}
-        if len(fill_mask_pipelines) == 1:
-            result_dict = result
-        else:
-            result_dict[model_i] = result
-        if print_results:
-            res_str = ', '.join(
-                f'{token} ({score:.2f})' for token, score in result.items()
-            )
-            if len(fill_mask_pipelines) > 1:
-                print(f"{model_i}: {original_sentence}: {res_str}")
+        try:
+            fill_result = fill_mask(sentence, targets=time_tokens, truncation=True)
+            result = {res["token_str"]: res["score"] for res in fill_result}
+            if len(fill_mask_pipelines) == 1:
+                result_dict = result
             else:
-                print(f"{original_sentence}: {res_str}")
+                result_dict[model_i] = result
+
+            if print_results:
+                res_str = ', '.join(f'{token} ({score:.2f})' for token, score in result.items())
+                if len(fill_mask_pipelines) > 1:
+                    print(f"{model_i}: {original_sentence}: {res_str}")
+                else:
+                    print(f"{original_sentence}: {res_str}")
+        except Exception as e:
+            print(f"Error processing with model {model_i}: {e}")
+
     return result_dict
 
 

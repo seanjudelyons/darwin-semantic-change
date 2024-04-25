@@ -364,7 +364,8 @@ if __name__ == "__main__":
     verbose = False
     device = 0
 
-    MODEL_PATH = "results/TempoBERT_semeval_eng_from_bert-tiny_prepend_token_linebyline_dynamic_30epochs_lr3e-4_split"  # Path to your model
+    # MODEL_PATH = "results/TempoBERT_semeval_eng_from_bert-tiny_prepend_token_linebyline_dynamic_30epochs_lr3e-4_split" 
+    MODEL_PATH = "output/2024-4-6_22-3-40_5_epochs"
     tester = test_bert.Tester(MODEL_PATH, device=device)
 
     if not verbose:
