@@ -22,5 +22,7 @@ temporal_attention/semeval*
 temporal_attention/output
 temporal_attention/data
 temporal_attention/data_2
+temporal_attention/n.py
+temporal_attention/old_cosine_temporal_shift.py
 
 

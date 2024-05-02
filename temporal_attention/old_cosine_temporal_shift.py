@@ -1,148 +1,87 @@
 from pathlib import Path
 from loguru import logger
-import torch
 from tqdm import tqdm
+import torch
+import nltk
+nltk.download('punkt')
 
 import data_utils
 import test_bert
-import utils
 
-from statistics import mean
-from loguru import logger
-
-
-# Assuming SCORE_METHOD is already defined elsewhere in your code.
 class SCORE_METHOD:
-    TIME_DIFF = "time_diff"
-    COSINE_DIST = "cosine_dist"
+    COSINE_DIST = 'cosine_dist'
 
-def get_sentences_containing_word(text_files, word, max_sentences, ignore_case=True):
-    sentences = []
+def get_embedding(model, sentences, word, time_ids, batch_size=None, verbose=False):
+    embs = model.embed_word(sentences, word, time_ids, batch_size=batch_size)
+    centroid = torch.mean(embs, dim=0)
+    if verbose:
+        logger.info(f"Embeddings for {word} at time {time_ids}: {embs}")
+        logger.info(f"Centroid for {word} at time {time_ids}: {centroid}")
+    return centroid
+
+def semantic_change_detection_temporal(time_sentences, model, word, score_method, batch_size=None, verbose=False):
+    print(time_sentences)
+    time_ids = [time_id for time_id, _ in time_sentences.items()]
+    embs = [get_embedding(model, sentences, word, time_id, batch_size=batch_size, verbose=verbose)
+            for (time_id, sentences) in zip(time_ids, time_sentences.values())]
+    embs = [emb for emb in embs if emb.nelement() > 0]
+    if not embs:
+        return None, None
+    embs = torch.stack(embs)
+    score = torch.dist(embs[0], embs[-1]).item()
+    return score, embs
+
+def find_sentences_of_word(text_files, word, ignore_case=False):
+    word_time_sentences = {}
     for file_path in text_files:
+        time_id = file_path.stem.split('_')[0]
         with open(file_path, 'r', encoding='utf-8') as file:
-            for line in file:
-                if ignore_case and word.lower() in line.lower() or word in line:
-                    sentences.append(line.strip())
-                    if len(sentences) >= max_sentences:
-                        return sentences
-    return sentences
+            text = file.read()
+            sentences = nltk.sent_tokenize(text)
+            for sentence in sentences:
+                if ignore_case:
+                    if word.lower() in sentence.lower():
+                        word_time_sentences.setdefault(time_id, []).append(sentence.strip())
+                else:
+                    if word in sentence:
+                        word_time_sentences.setdefault(time_id, []).append(sentence.strip())
+    return word_time_sentences
 
+def compare_embeddings_between_corpora(test_corpus_path1, test_corpus_path2, models, word, score_method, batch_size=None, verbose=False):
+    test_corpus_path1 = Path(test_corpus_path1)
+    test_corpus_path2 = Path(test_corpus_path2)
+    text_files1 = data_utils.iterdir(test_corpus_path1, suffix=".txt")
+    text_files2 = data_utils.iterdir(test_corpus_path2, suffix=".txt")
 
-def calc_semantic_shift(tester, sentences, word, score_method):
-    if score_method == SCORE_METHOD.TIME_DIFF:
-        return calc_change_score_time_diff(tester, sentences, word)
-    elif score_method == SCORE_METHOD.COSINE_DIST:
-        # Collect embeddings for each sentence containing the word.
-        embeddings = []
-        for sentence in sentences:
-            emb = get_embedding(tester, [sentence], word, hidden_layers_number=1)
-            if emb.nelement() > 0:  # Only consider valid embeddings
-                embeddings.append(emb)
-        
-        if len(embeddings) > 1:
-            embeddings = torch.stack(embeddings)
-            centroid = torch.mean(embeddings, dim=0)
-            # Calculate the average cosine distance between each embedding and the centroid
-            distances = torch.norm(embeddings - centroid, dim=1)
-            average_distance = torch.mean(distances).item()
-            return average_distance
+    results = {}
+    for model in models:
+        logger.info(f"Evaluating model: {model}")
+        sentences1 = find_sentences_of_word(text_files1, word, ignore_case=model.tokenizer.do_lower_case)
+        sentences2 = find_sentences_of_word(text_files2, word, ignore_case=model.tokenizer.do_lower_case)
+
+        score1, embs1 = semantic_change_detection_temporal(sentences1, model, word, score_method, batch_size=batch_size, verbose=verbose)
+        score2, embs2 = semantic_change_detection_temporal(sentences2, model, word, score_method, batch_size=batch_size, verbose=verbose)
+
+        if score1 is not None and score2 is not None:
+            distance = torch.dist(embs1, embs2).item()
+            logger.info(f"Semantic change score between corpora for '{word}': {distance}")
+            results[model] = distance
         else:
-            logger.warning("Not enough embeddings for calculation.")
-            return None
-    else:
-        logger.warning(f"Score method {score_method} not implemented.")
-        return None
+            logger.warning(f"Could not compute scores for {word} in one or both corpora.")
 
-
-def calc_change_score_time_diff(tester, sentences, word):
-    """
-    Calculate the semantic change score as the average absolute distance between predicted probabilities for different times
-    for all sentences containing the given word.
-    This works if there are only 2 different time points and utilizes the Tester's fill_mask_pipelines attribute.
-    """
-    if not isinstance(tester.fill_mask_pipelines, list):
-        fill_mask_pipelines = list(tester.fill_mask_pipelines)
-    else:
-        fill_mask_pipelines = tester.fill_mask_pipelines
-
-    time_diffs = []
-    for sent in sentences:
-        # Embed the time tokens directly in the sentence where the word appears, then mask the word for prediction
-        modified_sentence = sent.replace(word, "[MASK]")
-        result_dict = test_bert.predict_time(modified_sentence, fill_mask_pipelines, print_results=False)
-        
-
-        # Assume time tokens are well defined in the configuration of the first pipeline's model
-        time_tokens = [f"<{time}>" for time in fill_mask_pipelines[0].model.config.times]
-        if len(time_tokens) < 2:
-            logger.error("Not enough time tokens available for calculation.")
-            return None
-        
-        first_time_score = result_dict.get(time_tokens[0], 0)
-        print("#"*20)
-        print(first_time_score)
-        print("#"*20)
-        last_time_score = result_dict.get(time_tokens[-1], 0)
-        print("#"*20)
-        print(last_time_score)
-        print("#"*20)
-
-        
-        # Calculate the absolute difference between the first and last time point scores
-        if first_time_score and last_time_score:  # Ensure both scores are present
-            time_diff = abs(last_time_score - first_time_score)
-            time_diffs.append(time_diff)
-
-    if not time_diffs:
-        logger.warning(f"No time differences computed for {word}. Skipping it.")
-        return None
-
-    # Calculate and return the average of the time differences
-    average_diff = mean(time_diffs)
-    return average_diff
-
-
-def get_embedding(model, sentences, word, time=None, batch_size=None, require_word_in_vocab=False, hidden_layers_number=None):
-    if (require_word_in_vocab and word not in model.tokenizer.vocab) or len(sentences) == 0:
-        return torch.tensor([])
-
-    if hidden_layers_number is None:
-        num_hidden_layers = model.config.num_hidden_layers
-        if num_hidden_layers == 12:
-            hidden_layers_number = 1
-        elif num_hidden_layers == 2:
-            hidden_layers_number = 3
-        else:
-            hidden_layers_number = 1
-
-    embs = model.embed_word(sentences, word, time=time, batch_size=batch_size, hidden_layers_number=hidden_layers_number)
-    if embs.ndim == 1:
-        # in case of a single sentence, embs is actually the single embedding, not a list
-        return embs
-    else:
-        centroid = torch.mean(embs, dim=0)
-        return centroid
-
-
-
-def semantic_change_detection_wrapper(corpus_path, word, score_method, max_sentences):
-    corpus_path = Path(corpus_path)
-    text_files = list(corpus_path.rglob('*.txt'))
-    sentences = get_sentences_containing_word(text_files, word, max_sentences)
-    logger.info(f"Found {len(sentences)} sentences containing the word '{word}'.")
-
-    MODEL_PATH = "output/2024-4-6_22-3-40_5_epochs"
-    tester = test_bert.Tester(MODEL_PATH, device=0)
-    shift_score = calc_semantic_shift(tester, sentences, word, score_method)
-    if shift_score is not None:
-        logger.info(f"Semantic shift score for '{word}': {shift_score}")
-    else:
-        logger.warning("No valid data to calculate the shift score.")
+    return results
 
 if __name__ == "__main__":
-    main_corpus_path = "data"
-    target_word = "selection"
-    chosen_score_method = SCORE_METHOD.COSINE_DIST
-    sentence_limit = 200
+    MODEL_PATH = "output/2024-4-6_22-3-40_5_epochs"
+    tester = test_bert.Tester(MODEL_PATH)
 
-    semantic_change_detection_wrapper(main_corpus_path, target_word, chosen_score_method, sentence_limit)
+    test_corpus_path1 = "data/1845_letters.txt"
+    test_corpus_path2 = "data/1860_letters.txt"
+    
+
+    score_method = SCORE_METHOD.COSINE_DIST
+    batch_size = 64
+    verbose = True
+    target_word = "evolution"
+
+    compare_embeddings_between_corpora(test_corpus_path1, test_corpus_path2, tester.bert_models, target_word, score_method, batch_size, verbose)
