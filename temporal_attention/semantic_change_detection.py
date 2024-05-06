@@ -348,10 +348,11 @@ if __name__ == "__main__":
     hf_utils.prepare_tf_classes()
     utils.set_result_logger_level()
 
-    data_path = "data/semeval_eng_lemma_new"
+    data_path = "data/liverpool"
+    test_data_path = "data/test_data"
 
     corpus_name = Path(data_path).name
-    test_corpus_path = data_path
+    test_corpus_path = test_data_path
 
     score_method = SCORE_METHOD.COSINE_DIST
     require_word_in_vocab = True
